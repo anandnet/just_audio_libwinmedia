@@ -54,7 +54,7 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
     void _handlePlaybackEvent(e) {
       broadcastPlaybackEvent();
     }
-    
+    player.setVolume(100);
     final durationStream = player.streams.duration.listen(_handlePlaybackEvent);
     streamSubscriptions.add(durationStream);
     final indexStream = player.streams.playlist.listen(_handlePlaybackEvent);
