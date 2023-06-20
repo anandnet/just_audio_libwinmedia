@@ -1,9 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:flutter/services.dart';
-import 'package:libwinmedia/libwinmedia.dart';
+import "package:media_kit/media_kit.dart";
 
 /// The libwinmedia implementation of [JustAudioPlatform].
 class LibWinMediaJustAudioPlugin extends JustAudioPlatform {
@@ -11,7 +10,7 @@ class LibWinMediaJustAudioPlugin extends JustAudioPlatform {
 
   /// The entrypoint called by the generated plugin registrant.
   static void registerWith() {
-    LWM.initialize();
+    MediaKit.ensureInitialized();
     JustAudioPlatform.instance = LibWinMediaJustAudioPlugin();
   }
 
@@ -45,10 +44,9 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
   final _dataEventController = StreamController<PlayerDataMessage>.broadcast();
   ProcessingStateMessage _processingState = ProcessingStateMessage.idle;
   Player player;
-  double bufferingProgress = 0;
 
   LibWinMediaAudioPlayer(String id)
-      : player = Player(id: _id, startLoop: !Platform.isLinux),
+      : player = Player(),
         super(id) {
     _id++;
 
@@ -58,39 +56,39 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
 
     final durationStream = player.streams.duration.listen(_handlePlaybackEvent);
     streamSubscriptions.add(durationStream);
-    final indexStream = player.streams.index.listen(_handlePlaybackEvent);
+    final indexStream = player.streams.playlist.listen(_handlePlaybackEvent);
     streamSubscriptions.add(indexStream);
-    final bufferingStream = player.streams.isBuffering.listen((buffering) {
+    final bufferingStream = player.streams.buffering.listen((buffering) {
       if (buffering) {
         _processingState = ProcessingStateMessage.buffering;
       }
       _handlePlaybackEvent(buffering);
     });
     streamSubscriptions.add(bufferingStream);
-    final completedStream = player.streams.isCompleted.listen((completed) {
+    final completedStream = player.streams.completed.listen((completed) {
       if (completed) {
         _processingState = ProcessingStateMessage.completed;
       }
       _handlePlaybackEvent(completed);
     });
     streamSubscriptions.add(completedStream);
-    final playingStream = player.streams.isPlaying.listen((playing) {
+    final playingStream = player.streams.playing.listen((playing) {
       _processingState = ProcessingStateMessage.ready;
       _handlePlaybackEvent(playing);
     });
     streamSubscriptions.add(playingStream);
-    final mediasStream = player.streams.medias.listen(_handlePlaybackEvent);
+    final mediasStream = player.streams.playlist.listen(_handlePlaybackEvent);
     streamSubscriptions.add(mediasStream);
     final positionStream = player.streams.position.listen(_handlePlaybackEvent);
     streamSubscriptions.add(positionStream);
     final errorStream = player.streams.error.listen((error) {
       if (error == null) return;
       switch (error.code) {
-        case PlayerErrorCode.aborted:
+        case 0:
           throw PlatformException(code: 'abort', message: error.message);
         default:
           throw PlatformException(
-            code: '${error.code.index}',
+            code: '${error.code}',
             message: error.message,
           );
       }
@@ -100,19 +98,16 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
 
   /// Broadcasts a playback event from the platform side to the plugin side.
   void broadcastPlaybackEvent() {
-    if (player.downloadProgress != null) {
-      bufferingProgress = player.downloadProgress!;
-    }
     final updateTime = DateTime.now();
     _eventController.add(PlaybackEventMessage(
       processingState: _processingState,
-      updatePosition: player.position,
+      updatePosition: player.state.position,
       updateTime: updateTime,
-      bufferedPosition: player.state.duration * bufferingProgress.clamp(0, 1),
+      bufferedPosition: player.state.buffer,
       // TODO(libwinmedia): Icy Metadata
       icyMetadata: null,
       duration: player.state.duration,
-      currentIndex: player.state.index.clamp(0, player.state.medias.length),
+      currentIndex: 0,
       androidAudioSessionId: null,
     ));
   }
@@ -132,7 +127,7 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
       case 'dash':
       case 'hsl':
         final message = sourceMessage as UriAudioSourceMessage;
-        media.add(Media(uri: message.uri));
+        media.add(Media(message.uri));
         break;
       case 'silence':
         // final message = sourceMessage as SilenceAudioSourceMessage;
@@ -162,7 +157,7 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
   Future<LoadResponse> load(LoadRequest request) {
     _processingState = ProcessingStateMessage.loading;
     final medias = _loadAudioMessage(request.audioSourceMessage);
-    player.open(medias);
+    player.open(Playlist(medias));
     return Future.microtask(() {
       // Set state to buffering
       _processingState = ProcessingStateMessage.buffering;
@@ -188,13 +183,13 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
 
   @override
   Future<SetVolumeResponse> setVolume(SetVolumeRequest request) async {
-    player.volume = request.volume;
+    player.setVolume(request.volume);
     return SetVolumeResponse();
   }
 
   @override
   Future<SetSpeedResponse> setSpeed(SetSpeedRequest request) async {
-    player.rate = request.speed;
+    player.setRate(request.speed);
     return SetSpeedResponse();
   }
 
@@ -213,15 +208,10 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
   Future<SetLoopModeResponse> setLoopMode(SetLoopModeRequest request) async {
     switch (request.loopMode) {
       case LoopModeMessage.one:
-        player.isLooping = true;
         break;
       case LoopModeMessage.all:
-        player.isAutoRepeat = true;
-        player.isLooping = false;
         break;
       case LoopModeMessage.off:
-        player.isLooping = false;
-        player.isAutoRepeat = false;
         break;
     }
     return SetLoopModeResponse();
@@ -232,10 +222,8 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
       SetShuffleModeRequest request) async {
     switch (request.shuffleMode) {
       case ShuffleModeMessage.all:
-        player.isShuffling = true;
         break;
       case ShuffleModeMessage.none:
-        player.isShuffling = false;
         break;
     }
     return SetShuffleModeResponse();
