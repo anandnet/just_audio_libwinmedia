@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:flutter/services.dart';
 import "package:media_kit/media_kit.dart";
@@ -53,7 +54,7 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
     void _handlePlaybackEvent(e) {
       broadcastPlaybackEvent();
     }
-    player.setVolume(100);
+    
     final durationStream = player.streams.duration.listen(_handlePlaybackEvent);
     streamSubscriptions.add(durationStream);
     final indexStream = player.streams.playlist.listen(_handlePlaybackEvent);
@@ -83,6 +84,9 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
     streamSubscriptions.add(positionStream);
     final errorStream = player.streams.error.listen((error) {
       if (error == null) return;
+      if (kDebugMode) {
+        print("Error: ${error.code}  : ${error.message}");
+      }
       switch (error.code) {
         case 0:
           throw PlatformException(code: 'abort', message: error.message);
@@ -138,7 +142,11 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
 
         for (final source in message.children) {
           media.addAll(_loadAudioMessage(source));
+          if (kDebugMode) {
+            print("Source added to interface ${source.id}");
+          }
         }
+        
         break;
       case 'clipping':
         // final message = sourceMessage as ClippingAudioSourceMessage;
@@ -162,7 +170,10 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
       // Set state to buffering
       _processingState = ProcessingStateMessage.buffering;
       broadcastPlaybackEvent();
-
+      if (kDebugMode) {
+        print("Audio Loaded");
+      }
+      player.play();
       return LoadResponse(duration: null);
     });
   }
@@ -183,7 +194,7 @@ class LibWinMediaAudioPlayer extends AudioPlayerPlatform {
 
   @override
   Future<SetVolumeResponse> setVolume(SetVolumeRequest request) async {
-    player.setVolume(request.volume);
+    player.setVolume(request.volume*100);
     return SetVolumeResponse();
   }
 
